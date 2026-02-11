@@ -1,13 +1,14 @@
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-
 use crate::editor::Editor;
 
+mod command;
 mod editor;
+mod terminal;
+
 fn main() {
-    enable_raw_mode().unwrap();
+    terminal::make_raw().unwrap();
 
     let mut editor = Editor::new();
     editor.start();
 
-    disable_raw_mode().unwrap();
+    terminal::disable_raw().unwrap();
 }
