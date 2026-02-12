@@ -1,6 +1,6 @@
 use std::io::{Read, Write, stdin, stdout};
 
-use crate::{command, terminal};
+use crate::{command, editor, terminal};
 
 pub struct Editor {
     rows: u16,
@@ -29,32 +29,33 @@ impl Editor {
     fn process_keypress(&mut self) {
         while let Some(c) = self.read_key() {
             match c {
-                c if c == control_key('q') => break,
-                c if c == 'a' || c == 'd' || c == 's' || c == 'w' => {
-                    self.move_cursor(c);
-                }
+                c if c == Key::Char('q').control() => break,
+                Key::Special(EscapeSeq::UpArrow)
+                | Key::Special(EscapeSeq::DownArrow)
+                | Key::Special(EscapeSeq::RightArrow)
+                | Key::Special(EscapeSeq::LeftArrow) => self.move_cursor(c),
                 _ => {}
             }
             self.refresh_screen();
         }
     }
-    fn read_key(&self) -> Option<char> {
+    fn read_key(&self) -> Option<editor::Key> {
         let mut buf = [0u8; 1];
         stdin().read(&mut buf).ok()?;
         if buf[0] == b'\x1b' {
-            let escape_code = [0u8; 2];
-            stdin().read(&mut buf).ok()?;
+            let mut escape_code = [0u8; 3];
+            stdin().read(&mut escape_code).ok()?;
             if escape_code[0] == b'[' {
                 match escape_code[1] {
-                    b'A' => return Some('w'),
-                    b'B' => return Some('s'),
-                    b'C' => return Some('a'),
-                    b'D' => return Some('d'),
+                    b'A' => return Some(Key::Special(EscapeSeq::UpArrow)),
+                    b'B' => return Some(Key::Special(EscapeSeq::DownArrow)),
+                    b'C' => return Some(Key::Special(EscapeSeq::RightArrow)),
+                    b'D' => return Some(Key::Special(EscapeSeq::LeftArrow)),
                     _ => {}
                 }
             }
         }
-        return Some(buf[0] as char);
+        return Some(Key::Char(buf[0] as char));
     }
     fn draw_rows(&mut self) {
         for row in 0..self.rows {
@@ -95,19 +96,35 @@ impl Editor {
         self.draw_rows();
 
         self.buffer
-            .extend_from_slice(command::move_cursor(self.cx + 1, self.cy + 1));
+            .extend_from_slice(command::move_cursor(self.cy + 1, self.cx + 1));
         self.buffer.extend_from_slice(command::SHOW_CURSOR);
 
         stdout().write_all(&self.buffer).unwrap();
         stdout().flush().unwrap()
     }
 
-    fn move_cursor(&mut self, key: char) {
+    fn move_cursor(&mut self, key: Key) {
         match key {
-            'a' => self.cy -= 1,
-            'd' => self.cy += 1,
-            'w' => self.cx -= 1,
-            's' => self.cx += 1,
+            Key::Special(EscapeSeq::UpArrow) => {
+                if self.cy > 0 {
+                    self.cy -= 1
+                }
+            }
+            Key::Special(EscapeSeq::DownArrow) => {
+                if self.cy < self.rows as u32 {
+                    self.cy += 1
+                }
+            }
+            Key::Special(EscapeSeq::RightArrow) => {
+                if self.cx < self.cols as u32 {
+                    self.cx += 1
+                }
+            }
+            Key::Special(EscapeSeq::LeftArrow) => {
+                if self.cx > 0 {
+                    self.cx -= 1
+                }
+            }
             _ => panic!("this should not happen"),
         }
     }
@@ -124,6 +141,24 @@ impl Drop for Editor {
     }
 }
 
-const fn control_key(key: char) -> char {
-    (key as u8 & 0x1f) as char
+#[derive(PartialEq, Eq)]
+enum Key {
+    Char(char),
+    Special(EscapeSeq),
+}
+
+impl Key {
+    fn control(self) -> Self {
+        match self {
+            Key::Char(c) => Key::Char((c as u8 & 0x1f) as char),
+            Key::Special(_) => self,
+        }
+    }
+}
+#[derive(PartialEq, Eq)]
+enum EscapeSeq {
+    RightArrow,
+    LeftArrow,
+    UpArrow,
+    DownArrow,
 }
