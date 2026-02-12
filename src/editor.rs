@@ -34,6 +34,22 @@ impl Editor {
                 | Key::Special(EscapeSeq::DownArrow)
                 | Key::Special(EscapeSeq::RightArrow)
                 | Key::Special(EscapeSeq::LeftArrow) => self.move_cursor(c),
+                Key::Special(EscapeSeq::Home) => {
+                    self.cx = 0;
+                }
+
+                Key::Special(EscapeSeq::End) => {
+                    self.cx = self.cols as u32 - 1;
+                }
+                Key::Special(EscapeSeq::PageUp) | Key::Special(EscapeSeq::PageDown) => {
+                    for _ in 0..self.rows {
+                        self.move_cursor(if c == Key::Special(EscapeSeq::PageUp) {
+                            Key::Special(EscapeSeq::UpArrow)
+                        } else {
+                            Key::Special(EscapeSeq::DownArrow)
+                        });
+                    }
+                }
                 _ => {}
             }
             self.refresh_screen();
@@ -45,14 +61,35 @@ impl Editor {
         if buf[0] == b'\x1b' {
             let mut escape_code = [0u8; 3];
             stdin().read(&mut escape_code).ok()?;
-            if escape_code[0] == b'[' {
-                match escape_code[1] {
+            match escape_code[0] {
+                b'[' => match escape_code[1] {
                     b'A' => return Some(Key::Special(EscapeSeq::UpArrow)),
                     b'B' => return Some(Key::Special(EscapeSeq::DownArrow)),
                     b'C' => return Some(Key::Special(EscapeSeq::RightArrow)),
                     b'D' => return Some(Key::Special(EscapeSeq::LeftArrow)),
+                    b'H' => return Some(Key::Special(EscapeSeq::Home)),
+                    b'F' => return Some(Key::Special(EscapeSeq::End)),
+                    c => {
+                        if escape_code[2] == b'~' {
+                            match c {
+                                b'1' => return Some(Key::Special(EscapeSeq::Home)),
+                                b'3' => return Some(Key::Special(EscapeSeq::Delete)),
+                                b'4' => return Some(Key::Special(EscapeSeq::End)),
+                                b'5' => return Some(Key::Special(EscapeSeq::PageUp)),
+                                b'6' => return Some(Key::Special(EscapeSeq::PageDown)),
+                                b'7' => return Some(Key::Special(EscapeSeq::Home)),
+                                b'8' => return Some(Key::Special(EscapeSeq::End)),
+                                _ => {}
+                            }
+                        }
+                    }
+                },
+                b'O' => match escape_code[1] {
+                    b'H' => return Some(Key::Special(EscapeSeq::Home)),
+                    b'F' => return Some(Key::Special(EscapeSeq::End)),
                     _ => {}
-                }
+                },
+                _ => {}
             }
         }
         return Some(Key::Char(buf[0] as char));
@@ -141,7 +178,7 @@ impl Drop for Editor {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 enum Key {
     Char(char),
     Special(EscapeSeq),
@@ -155,10 +192,15 @@ impl Key {
         }
     }
 }
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 enum EscapeSeq {
     RightArrow,
     LeftArrow,
     UpArrow,
     DownArrow,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Delete,
 }
