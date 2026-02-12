@@ -29,3 +29,8 @@ pub fn disable_raw() -> io::Result<()> {
     tcsetattr(stdin().as_raw_fd(), TCSAFLUSH, &termios)?;
     Ok(())
 }
+
+pub fn size() -> io::Result<(u16, u16)> {
+    let winsize = rustix::termios::tcgetwinsize(stdin())?;
+    Ok((winsize.ws_col, winsize.ws_row))
+}

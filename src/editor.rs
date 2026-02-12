@@ -1,9 +1,6 @@
-use core::panic;
 use std::io::{Read, Write, stdin, stdout};
 
-use crossterm::terminal;
-
-use crate::command;
+use crate::{command, terminal};
 
 pub struct Editor {
     rows: u16,
