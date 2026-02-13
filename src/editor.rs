@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
     path::Path,
-    usize,
 };
 
 use crate::{command, editor, terminal};
@@ -16,7 +15,6 @@ pub struct Editor {
     cx: u32,
     cy: u32,
     lines: Vec<String>,
-    num_lines: usize,
 }
 
 impl Editor {
@@ -31,7 +29,6 @@ impl Editor {
             cx: 0,
             cy: 0,
             lines: Vec::new(),
-            num_lines: 0,
         }
     }
 
@@ -44,7 +41,6 @@ impl Editor {
         let bufread = BufReader::new(file);
 
         let lines: Vec<String> = bufread.lines().flatten().collect();
-        self.num_lines = lines.len();
         self.lines = lines;
 
         return Ok(());
@@ -136,7 +132,7 @@ impl Editor {
                     );
                 }
             } else {
-                if self.num_lines == 0 && row == self.rows / 3 {
+                if self.lines.len() == 0 && row == self.rows / 3 {
                     let msg = format!("Mega editor -- version {}", env!("CARGO_PKG_VERSION"));
                     let msg_len = if msg.len() <= self.cols as usize {
                         msg.len()
