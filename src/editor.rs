@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
     path::Path,
+    usize,
 };
 
 use crate::{command, editor, terminal};
@@ -10,6 +11,7 @@ pub struct Editor {
     rows: u16,
     cols: u16,
     row_offset: usize,
+    col_offset: usize,
     buffer: Vec<u8>,
     cx: u32,
     cy: u32,
@@ -24,6 +26,7 @@ impl Editor {
             rows: size.1,
             cols: size.0,
             row_offset: 0,
+            col_offset: 0,
             buffer: Vec::new(),
             cx: 0,
             cy: 0,
@@ -121,8 +124,17 @@ impl Editor {
             if line_in_file < self.lines.len() {
                 //we still have lines to print
                 let line = &self.lines[line_in_file];
-                let len = line.len().min((self.cols - 1) as usize);
-                self.buffer.extend_from_slice(&line.as_bytes()[..len]);
+                let len: isize = (line.len() as isize) - (self.col_offset as isize);
+
+                let len = (len.max(0) as usize).min((self.cols - 1) as usize);
+                if len > 0 {
+                    // need this because even if the range below is 0, the compiler will
+                    // still try to index from offset to offset == nothing, but that doesnt exist
+                    // in the string which is why the len is 0
+                    self.buffer.extend_from_slice(
+                        &line[self.col_offset..self.col_offset + len].as_bytes(),
+                    );
+                }
             } else {
                 if self.num_lines == 0 && row == self.rows / 3 {
                     let msg = format!("Mega editor -- version {}", env!("CARGO_PKG_VERSION"));
@@ -156,10 +168,21 @@ impl Editor {
     }
     fn scroll(&mut self) {
         if (self.cy as usize) < self.row_offset {
-            self.row_offset = self.cy as usize
+            self.row_offset = self.cy as usize;
         }
         if self.cy as usize >= self.row_offset as usize + self.rows as usize {
-            self.row_offset = self.cy as usize - self.rows as usize + 1
+            // technically, i think we can just add one to the offset because we are only moving
+            // one step at a time, but i think we do this bc we will scroll with page up and down,
+            // and that could be more than just 1 step at a time, so recalc based on cursor pointer
+            // in the file
+            self.row_offset = self.cy as usize - self.rows as usize + 1;
+        }
+
+        if (self.cx as usize) < self.col_offset {
+            self.col_offset = self.cx as usize;
+        }
+        if self.cx as usize >= self.cols as usize + self.col_offset {
+            self.col_offset = self.cx as usize - self.cols as usize + 1;
         }
     }
 
@@ -173,7 +196,7 @@ impl Editor {
 
         self.buffer.extend_from_slice(command::move_cursor(
             (self.cy as usize - self.row_offset + 1) as u32,
-            self.cx + 1,
+            (self.cx as usize - self.col_offset + 1) as u32,
         ));
         self.buffer.extend_from_slice(command::SHOW_CURSOR);
 
@@ -183,6 +206,9 @@ impl Editor {
     }
 
     fn move_cursor(&mut self, key: Key) {
+        // cy, could be one more than the file,
+        // and if so there is not a corresponding line in lines, so will panic
+
         match key {
             Key::Special(EscapeSeq::UpArrow) => {
                 if self.cy > 0 {
@@ -194,17 +220,23 @@ impl Editor {
                     self.cy += 1
                 }
             }
-            Key::Special(EscapeSeq::RightArrow) => {
-                if self.cx < self.cols as u32 {
-                    self.cx += 1
-                }
-            }
+            Key::Special(EscapeSeq::RightArrow) => self.cx += 1,
             Key::Special(EscapeSeq::LeftArrow) => {
                 if self.cx > 0 {
                     self.cx -= 1
                 }
             }
             _ => panic!("this should not happen"),
+        }
+        //snap to end of line
+        //need it down here bc may have adjusted the cy above
+        let curr_row = self.lines.get(self.cy as usize);
+
+        if let Some(curr_row) = curr_row {
+            self.cx = self.cx.min(curr_row.len() as u32) // curr_row.len() is actually one more bc
+        // 0 indexed so you can go one more than the length of the line
+        } else {
+            self.cx = 0;
         }
     }
 
