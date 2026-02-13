@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
     path::Path,
+    usize,
 };
 
 use crate::{command, editor, terminal};
@@ -216,10 +217,31 @@ impl Editor {
                     self.cy += 1
                 }
             }
-            Key::Special(EscapeSeq::RightArrow) => self.cx += 1,
+            Key::Special(EscapeSeq::RightArrow) => {
+                self.cx += 1;
+                let curr_row = self.lines.get(self.cy as usize); // can be one more than lines, so
+                // need to check
+                if let Some(curr_row) = curr_row {
+                    if (self.cx as usize) > curr_row.len() {
+                        //went right on position end, apparently want to wrap down a line
+                        // ie do not do this on the last line
+                        self.cy += 1;
+                        self.cx = 0;
+                    }
+                }
+            }
             Key::Special(EscapeSeq::LeftArrow) => {
                 if self.cx > 0 {
                     self.cx -= 1
+                } else {
+                    //went left on position 0, apparently want to wrap up a line
+                    if self.cy > 0 {
+                        // so no overflow
+                        // do not do this on the first line
+                        let prev_row = &self.lines[self.cy as usize - 1];
+                        self.cy -= 1;
+                        self.cx = (prev_row.len()) as u32;
+                    }
                 }
             }
             _ => panic!("this should not happen"),
