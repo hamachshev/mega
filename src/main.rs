@@ -1,3 +1,5 @@
+use std::{env::args, path::Path};
+
 use crate::editor::Editor;
 
 mod command;
@@ -8,6 +10,11 @@ fn main() {
     terminal::make_raw().unwrap();
 
     let mut editor = Editor::new();
+
+    if let Some(path) = args().nth(1) {
+        let path = Path::new(&path);
+        editor.open(&path).unwrap();
+    }
     editor.start();
 
     terminal::disable_raw().unwrap();

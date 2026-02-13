@@ -1,13 +1,20 @@
-use std::io::{Read, Write, stdin, stdout};
+use std::{
+    fs::File,
+    io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
+    path::Path,
+};
 
 use crate::{command, editor, terminal};
 
 pub struct Editor {
     rows: u16,
     cols: u16,
+    row_offset: usize,
     buffer: Vec<u8>,
     cx: u32,
     cy: u32,
+    lines: Vec<String>,
+    num_lines: usize,
 }
 
 impl Editor {
@@ -16,15 +23,28 @@ impl Editor {
         Editor {
             rows: size.1,
             cols: size.0,
+            row_offset: 0,
             buffer: Vec::new(),
             cx: 0,
             cy: 0,
+            lines: Vec::new(),
+            num_lines: 0,
         }
     }
 
     pub fn start(&mut self) {
         self.refresh_screen();
         self.process_keypress();
+    }
+    pub fn open(&mut self, filename: &Path) -> io::Result<()> {
+        let file = File::open(filename)?;
+        let bufread = BufReader::new(file);
+
+        let lines: Vec<String> = bufread.lines().flatten().collect();
+        self.num_lines = lines.len();
+        self.lines = lines;
+
+        return Ok(());
     }
     fn process_keypress(&mut self) {
         while let Some(c) = self.read_key() {
@@ -96,26 +116,35 @@ impl Editor {
     }
     fn draw_rows(&mut self) {
         for row in 0..self.rows {
-            if row == self.rows / 3 {
-                let msg = format!("Mega editor -- version {}", env!("CARGO_PKG_VERSION"));
-                let msg_len = if msg.len() <= self.cols as usize {
-                    msg.len()
-                } else {
-                    self.cols as usize
-                };
-                let mut msg_padding = (self.cols as usize - msg_len) / 2;
+            let line_in_file = row as usize + self.row_offset;
 
-                if msg_padding != 0 {
-                    self.buffer.push(b'~');
-                    msg_padding -= 1;
-                }
-
-                for _ in 0..msg_padding {
-                    self.buffer.push(b' ');
-                }
-                self.buffer.extend_from_slice(&msg[0..msg_len].as_bytes());
+            if line_in_file < self.lines.len() {
+                //we still have lines to print
+                let line = &self.lines[line_in_file];
+                let len = line.len().min((self.cols - 1) as usize);
+                self.buffer.extend_from_slice(&line.as_bytes()[..len]);
             } else {
-                self.buffer.push(b'~');
+                if self.num_lines == 0 && row == self.rows / 3 {
+                    let msg = format!("Mega editor -- version {}", env!("CARGO_PKG_VERSION"));
+                    let msg_len = if msg.len() <= self.cols as usize {
+                        msg.len()
+                    } else {
+                        self.cols as usize
+                    };
+                    let mut msg_padding = (self.cols as usize - msg_len) / 2;
+
+                    if msg_padding != 0 {
+                        self.buffer.push(b'~');
+                        msg_padding -= 1;
+                    }
+
+                    for _ in 0..msg_padding {
+                        self.buffer.push(b' ');
+                    }
+                    self.buffer.extend_from_slice(&msg[0..msg_len].as_bytes());
+                } else {
+                    self.buffer.push(b'~');
+                }
             }
 
             self.buffer.extend_from_slice(command::CLEAR_REST_OF_LINE);
@@ -125,18 +154,31 @@ impl Editor {
             }
         }
     }
+    fn scroll(&mut self) {
+        if (self.cy as usize) < self.row_offset {
+            self.row_offset = self.cy as usize
+        }
+        if self.cy as usize >= self.row_offset as usize + self.rows as usize {
+            self.row_offset = self.cy as usize - self.rows as usize + 1
+        }
+    }
 
     fn refresh_screen(&mut self) {
+        self.scroll();
+
         self.buffer.extend_from_slice(command::HIDE_CURSOR);
         self.buffer.extend_from_slice(command::MOVE_CURSOR_TOP_LEFT);
 
         self.draw_rows();
 
-        self.buffer
-            .extend_from_slice(command::move_cursor(self.cy + 1, self.cx + 1));
+        self.buffer.extend_from_slice(command::move_cursor(
+            (self.cy as usize - self.row_offset + 1) as u32,
+            self.cx + 1,
+        ));
         self.buffer.extend_from_slice(command::SHOW_CURSOR);
 
         stdout().write_all(&self.buffer).unwrap();
+        self.buffer.clear();
         stdout().flush().unwrap()
     }
 
@@ -148,7 +190,7 @@ impl Editor {
                 }
             }
             Key::Special(EscapeSeq::DownArrow) => {
-                if self.cy < self.rows as u32 {
+                if self.cy < self.lines.len() as u32 {
                     self.cy += 1
                 }
             }
@@ -168,6 +210,7 @@ impl Editor {
 
     fn clear_screen(&self) {
         stdout().write(command::CLEAR_SCREEN).unwrap();
+        stdout().write(command::MOVE_CURSOR_TOP_LEFT).unwrap();
         stdout().flush().unwrap();
     }
 }
