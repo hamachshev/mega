@@ -1,4 +1,4 @@
-use std::{env::args, path::Path};
+use std::env::args;
 
 use crate::editor::Editor;
 
@@ -12,8 +12,7 @@ fn main() {
     let mut editor = Editor::new();
 
     if let Some(path) = args().nth(1) {
-        let path = Path::new(&path);
-        editor.open(&path).unwrap();
+        editor.open(path.into()).unwrap();
     }
     editor.start();
 

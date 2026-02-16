@@ -1,8 +1,8 @@
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
-    path::Path,
-    u32,
+    path::PathBuf,
+    time::{Duration, Instant},
 };
 
 use crate::{command, editor, terminal};
@@ -20,13 +20,16 @@ pub struct Editor {
     rx: u32,
     lines: Vec<String>,
     render: Vec<String>,
+    filename: Option<PathBuf>,
+    status_msg: String,
+    status_msg_time: Instant,
 }
 
 impl Editor {
     pub fn new() -> Self {
         let size = terminal::size().expect("couldnt get size of terminal window");
         Editor {
-            rows: size.1,
+            rows: size.1 - 2, // minus 1 for status bar, and minus 1 for message bar
             cols: size.0,
             row_offset: 0,
             col_offset: 0,
@@ -36,15 +39,21 @@ impl Editor {
             rx: 0,
             lines: Vec::new(),
             render: Vec::new(),
+            filename: None,
+            status_msg: String::new(),
+            status_msg_time: Instant::now(),
         }
     }
 
     pub fn start(&mut self) {
+        self.set_status_message("HELP: Ctrl-Q to quit");
         self.refresh_screen();
         self.process_keypress();
     }
-    pub fn open(&mut self, filename: &Path) -> io::Result<()> {
-        let file = File::open(filename)?;
+    pub fn open(&mut self, filename: PathBuf) -> io::Result<()> {
+        let file = File::open(&filename)?;
+        self.filename = Some(filename);
+
         let bufread = BufReader::new(file);
 
         let lines: Vec<String> = bufread.lines().flatten().collect();
@@ -189,9 +198,39 @@ impl Editor {
 
             self.buffer.extend_from_slice(command::CLEAR_REST_OF_LINE);
 
-            if row < self.rows - 1 {
-                self.buffer.extend_from_slice(b"\r\n");
+            self.buffer.extend_from_slice(b"\r\n");
+        }
+    }
+    fn draw_status_bar(&mut self) {
+        self.buffer.extend_from_slice(command::INVERTED_COLORS);
+        let status = match &self.filename {
+            Some(filename) => match filename.to_str() {
+                Some(filename) => {
+                    format!("{} - {} lines", filename, self.rows)
+                }
+                None => format!("[Non-Unicode file name] - {} lines", self.rows),
+            },
+            None => {
+                format!("No Name] - {} lines", self.rows)
             }
+        };
+        let len = status.len().min(self.cols as usize);
+        self.buffer.extend_from_slice(&status[0..len].as_bytes());
+
+        // line number
+        let right_status = format!("{}/{}", self.cy + 1, self.lines.len());
+
+        for _ in len..(self.cols as usize) - right_status.len() {
+            self.buffer.push(b' ');
+        }
+        self.buffer.extend_from_slice(right_status.as_bytes());
+        self.buffer.extend_from_slice(command::NORMAL_COLORS);
+        self.buffer.extend_from_slice(b"\r\n");
+    }
+    fn draw_message_bar(&mut self) {
+        self.buffer.extend_from_slice(command::CLEAR_REST_OF_LINE);
+        if self.status_msg_time.elapsed() < Duration::new(5, 0) {
+            self.buffer.extend_from_slice(self.status_msg.as_bytes());
         }
     }
     fn scroll(&mut self) {
@@ -223,6 +262,8 @@ impl Editor {
         self.buffer.extend_from_slice(command::MOVE_CURSOR_TOP_LEFT);
 
         self.draw_rows();
+        self.draw_status_bar();
+        self.draw_message_bar();
 
         self.buffer.extend_from_slice(command::move_cursor(
             (self.cy as usize - self.row_offset + 1) as u32,
@@ -313,6 +354,11 @@ impl Editor {
                 }
             }
         }
+    }
+    fn set_status_message(&mut self, msg: &str) {
+        self.status_msg.clear();
+        self.status_msg = msg.to_string();
+        self.status_msg_time = Instant::now();
     }
 }
 
