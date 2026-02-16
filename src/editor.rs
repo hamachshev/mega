@@ -2,10 +2,12 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
     path::Path,
-    usize,
+    u32,
 };
 
 use crate::{command, editor, terminal};
+
+const MEGA_TAB_STOP: usize = 8;
 
 pub struct Editor {
     rows: u16,
@@ -15,7 +17,9 @@ pub struct Editor {
     buffer: Vec<u8>,
     cx: u32,
     cy: u32,
+    rx: u32,
     lines: Vec<String>,
+    render: Vec<String>,
 }
 
 impl Editor {
@@ -29,7 +33,9 @@ impl Editor {
             buffer: Vec::new(),
             cx: 0,
             cy: 0,
+            rx: 0,
             lines: Vec::new(),
+            render: Vec::new(),
         }
     }
 
@@ -42,6 +48,25 @@ impl Editor {
         let bufread = BufReader::new(file);
 
         let lines: Vec<String> = bufread.lines().flatten().collect();
+        self.render = lines
+            .clone()
+            .into_iter()
+            .map(|line| {
+                let mut idx: usize = 0;
+                line.chars()
+                    .map(|c| {
+                        if c == '\t' {
+                            let spaces_needed = (MEGA_TAB_STOP - (idx % MEGA_TAB_STOP)) as usize;
+                            idx += spaces_needed;
+                            " ".repeat(spaces_needed)
+                        } else {
+                            idx += 1;
+                            c.to_string()
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
         self.lines = lines;
 
         return Ok(());
@@ -59,15 +84,23 @@ impl Editor {
                 }
 
                 Key::Special(EscapeSeq::End) => {
-                    self.cx = self.cols as u32 - 1;
+                    if self.cy < self.lines.len() as u32 {
+                        self.cx = (&self.lines[self.cy as usize].len() - 1) as u32;
+                    }
                 }
-                Key::Special(EscapeSeq::PageUp) | Key::Special(EscapeSeq::PageDown) => {
+                Key::Special(EscapeSeq::PageUp) => {
+                    self.cy = self.row_offset as u32;
                     for _ in 0..self.rows {
-                        self.move_cursor(if c == Key::Special(EscapeSeq::PageUp) {
-                            Key::Special(EscapeSeq::UpArrow)
-                        } else {
-                            Key::Special(EscapeSeq::DownArrow)
-                        });
+                        self.move_cursor(Key::Special(EscapeSeq::UpArrow));
+                    }
+                }
+                Key::Special(EscapeSeq::PageDown) => {
+                    self.cy = (self.row_offset as u32) + (self.rows as u32) - 1;
+                    if (self.cy as usize) > self.lines.len() {
+                        self.cy = self.lines.len() as u32;
+                    }
+                    for _ in 0..self.rows {
+                        self.move_cursor(Key::Special(EscapeSeq::DownArrow));
                     }
                 }
                 _ => {}
@@ -118,9 +151,9 @@ impl Editor {
         for row in 0..self.rows {
             let line_in_file = row as usize + self.row_offset;
 
-            if line_in_file < self.lines.len() {
+            if line_in_file < self.render.len() {
                 //we still have lines to print
-                let line = &self.lines[line_in_file];
+                let line = &self.render[line_in_file];
                 let len: isize = (line.len() as isize) - (self.col_offset as isize);
 
                 let len = (len.max(0) as usize).min((self.cols - 1) as usize);
@@ -132,28 +165,26 @@ impl Editor {
                         &line[self.col_offset..self.col_offset + len].as_bytes(),
                     );
                 }
-            } else {
-                if self.lines.len() == 0 && row == self.rows / 3 {
-                    let msg = format!("Mega editor -- version {}", env!("CARGO_PKG_VERSION"));
-                    let msg_len = if msg.len() <= self.cols as usize {
-                        msg.len()
-                    } else {
-                        self.cols as usize
-                    };
-                    let mut msg_padding = (self.cols as usize - msg_len) / 2;
-
-                    if msg_padding != 0 {
-                        self.buffer.push(b'~');
-                        msg_padding -= 1;
-                    }
-
-                    for _ in 0..msg_padding {
-                        self.buffer.push(b' ');
-                    }
-                    self.buffer.extend_from_slice(&msg[0..msg_len].as_bytes());
+            } else if self.lines.len() == 0 && row == self.rows / 3 {
+                let msg = format!("Mega editor -- version {}", env!("CARGO_PKG_VERSION"));
+                let msg_len = if msg.len() <= self.cols as usize {
+                    msg.len()
                 } else {
+                    self.cols as usize
+                };
+                let mut msg_padding = (self.cols as usize - msg_len) / 2;
+
+                if msg_padding != 0 {
                     self.buffer.push(b'~');
+                    msg_padding -= 1;
                 }
+
+                for _ in 0..msg_padding {
+                    self.buffer.push(b' ');
+                }
+                self.buffer.extend_from_slice(&msg[0..msg_len].as_bytes());
+            } else {
+                self.buffer.push(b'~');
             }
 
             self.buffer.extend_from_slice(command::CLEAR_REST_OF_LINE);
@@ -164,6 +195,8 @@ impl Editor {
         }
     }
     fn scroll(&mut self) {
+        self.convert_cx_to_rx();
+
         if (self.cy as usize) < self.row_offset {
             self.row_offset = self.cy as usize;
         }
@@ -175,11 +208,11 @@ impl Editor {
             self.row_offset = self.cy as usize - self.rows as usize + 1;
         }
 
-        if (self.cx as usize) < self.col_offset {
-            self.col_offset = self.cx as usize;
+        if (self.rx as usize) < self.col_offset {
+            self.col_offset = self.rx as usize;
         }
-        if self.cx as usize >= self.cols as usize + self.col_offset {
-            self.col_offset = self.cx as usize - self.cols as usize + 1;
+        if self.rx as usize >= self.cols as usize + self.col_offset {
+            self.col_offset = self.rx as usize - self.cols as usize + 1;
         }
     }
 
@@ -193,7 +226,7 @@ impl Editor {
 
         self.buffer.extend_from_slice(command::move_cursor(
             (self.cy as usize - self.row_offset + 1) as u32,
-            (self.cx as usize - self.col_offset + 1) as u32,
+            (self.rx as usize - self.col_offset + 1) as u32,
         ));
         self.buffer.extend_from_slice(command::SHOW_CURSOR);
 
@@ -262,6 +295,24 @@ impl Editor {
         stdout().write(command::CLEAR_SCREEN).unwrap();
         stdout().write(command::MOVE_CURSOR_TOP_LEFT).unwrap();
         stdout().flush().unwrap();
+    }
+    fn convert_cx_to_rx(&mut self) {
+        self.rx = 0;
+        if (self.cy as usize) < self.lines.len() {
+            let curr_row = &self.lines[self.cy as usize];
+
+            for (i, c) in curr_row.chars().enumerate() {
+                if i == self.cx as usize {
+                    break;
+                }
+
+                self.rx += 1; //count char
+                if c == '\t' {
+                    let spaces_needed = (MEGA_TAB_STOP - (i % MEGA_TAB_STOP)) as u32;
+                    self.rx += spaces_needed - 1; //already counted one for '\t'
+                }
+            }
+        }
     }
 }
 
