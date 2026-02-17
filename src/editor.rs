@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{command, editor, terminal};
+use crate::{command, editor, keys, terminal};
 
 const MEGA_TAB_STOP: usize = 8;
 
@@ -46,7 +46,7 @@ impl Editor {
     }
 
     pub fn start(&mut self) {
-        self.set_status_message("HELP: Ctrl-Q to quit");
+        self.set_status_message("HELP: Ctrl-S to save | Ctrl-Q to quit");
         self.refresh_screen();
         self.process_keypress();
     }
@@ -84,6 +84,15 @@ impl Editor {
         while let Some(c) = self.read_key() {
             match c {
                 c if c == Key::Char('q').control() => break,
+                c if c == Key::Char('l').control() => {}
+                c if c == Key::Char('s').control() => match self.save() {
+                    Ok(len) => {
+                        self.set_status_message(&format!("{} bytes written to disk", len));
+                    }
+                    Err(error) => {
+                        self.set_status_message(&format!("Can't save! IO error: {}", error));
+                    }
+                },
                 Key::Special(EscapeSeq::UpArrow)
                 | Key::Special(EscapeSeq::DownArrow)
                 | Key::Special(EscapeSeq::RightArrow)
@@ -111,6 +120,12 @@ impl Editor {
                     for _ in 0..self.rows {
                         self.move_cursor(Key::Special(EscapeSeq::DownArrow));
                     }
+                }
+                Key::Char(keys::BACKSPACE) | Key::Special(EscapeSeq::Delete) => {}
+                c if c == Key::Char('h').control() => {}
+                Key::Char(keys::ENTER) => {}
+                Key::Char(c) => {
+                    self.insert_char(c);
                 }
                 _ => {}
             }
@@ -332,6 +347,15 @@ impl Editor {
         }
     }
 
+    fn insert_char(&mut self, c: char) {
+        if (self.cy as usize) > self.lines.len() {
+            self.render.push(String::new());
+            self.lines.push(String::new()); //add new line to render and lines buffers 
+        }
+        self.render[self.cy as usize].insert(self.rx as usize, c); // TODO: handle insert tabs
+        self.lines[self.cy as usize].insert(self.cx as usize, c);
+    }
+
     fn clear_screen(&self) {
         stdout().write(command::CLEAR_SCREEN).unwrap();
         stdout().write(command::MOVE_CURSOR_TOP_LEFT).unwrap();
@@ -354,6 +378,15 @@ impl Editor {
                 }
             }
         }
+    }
+    fn save(&mut self) -> io::Result<usize> {
+        if let Some(filename) = &self.filename {
+            let mut file = File::create(filename)?;
+            let buf = self.lines.join("\n");
+            file.write_all(buf.as_bytes())?;
+            return Ok(buf.as_bytes().len());
+        }
+        Ok(0)
     }
     fn set_status_message(&mut self, msg: &str) {
         self.status_msg.clear();

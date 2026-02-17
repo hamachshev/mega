@@ -4,6 +4,7 @@ use crate::editor::Editor;
 
 mod command;
 mod editor;
+mod keys;
 mod terminal;
 
 fn main() {
