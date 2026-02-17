@@ -23,6 +23,7 @@ pub struct Editor {
     filename: Option<PathBuf>,
     status_msg: String,
     status_msg_time: Instant,
+    dirty: bool,
 }
 
 impl Editor {
@@ -42,6 +43,7 @@ impl Editor {
             filename: None,
             status_msg: String::new(),
             status_msg_time: Instant::now(),
+            dirty: false,
         }
     }
 
@@ -218,12 +220,14 @@ impl Editor {
     }
     fn draw_status_bar(&mut self) {
         self.buffer.extend_from_slice(command::INVERTED_COLORS);
+        let modified = if self.dirty { "(modified)" } else { "" };
+
         let status = match &self.filename {
             Some(filename) => match filename.to_str() {
                 Some(filename) => {
-                    format!("{} - {} lines", filename, self.rows)
+                    format!("{} {} - {} lines", filename, modified, self.rows)
                 }
-                None => format!("[Non-Unicode file name] - {} lines", self.rows),
+                None => format!("[Non-Unicode file name] {} - {} lines", modified, self.rows),
             },
             None => {
                 format!("No Name] - {} lines", self.rows)
@@ -354,6 +358,8 @@ impl Editor {
         }
         self.render[self.cy as usize].insert(self.rx as usize, c); // TODO: handle insert tabs
         self.lines[self.cy as usize].insert(self.cx as usize, c);
+
+        self.dirty = true;
     }
 
     fn clear_screen(&self) {
@@ -384,8 +390,10 @@ impl Editor {
             let mut file = File::create(filename)?;
             let buf = self.lines.join("\n");
             file.write_all(buf.as_bytes())?;
+            self.dirty = false;
             return Ok(buf.as_bytes().len());
         }
+        self.dirty = false;
         Ok(0)
     }
     fn set_status_message(&mut self, msg: &str) {
