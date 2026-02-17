@@ -8,6 +8,7 @@ use std::{
 use crate::{command, editor, keys, terminal};
 
 const MEGA_TAB_STOP: usize = 8;
+const MEGA_QUIT_TIMES: usize = 3;
 
 pub struct Editor {
     rows: u16,
@@ -83,9 +84,19 @@ impl Editor {
         return Ok(());
     }
     fn process_keypress(&mut self) {
+        let mut quit_times = MEGA_QUIT_TIMES;
+
         while let Some(c) = self.read_key() {
             match c {
-                c if c == Key::Char('q').control() => break,
+                c if c == Key::Char('q').control() => {
+                    if self.dirty && quit_times > 1 {
+                        quit_times -= 1;
+                        self.set_status_message(&format!("WARNING!!! File has unsaved changes. Press Ctrl-Q {} more time{} to quit.", quit_times, if quit_times  == 1 {""} else {"s"}));
+                        self.refresh_screen();
+                        continue;
+                    }
+                    break;
+                }
                 c if c == Key::Char('l').control() => {}
                 c if c == Key::Char('s').control() => match self.save() {
                     Ok(len) => {
@@ -131,6 +142,10 @@ impl Editor {
                 }
                 _ => {}
             }
+
+            //user pressed other key, reset quit_times
+            quit_times = MEGA_QUIT_TIMES;
+
             self.refresh_screen();
         }
     }
