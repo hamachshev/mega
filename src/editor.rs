@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rustix::io::write;
+
 use crate::{command, editor, keys, terminal};
 
 const MEGA_TAB_STOP: usize = 8;
@@ -134,9 +136,20 @@ impl Editor {
                         self.move_cursor(Key::Special(EscapeSeq::DownArrow));
                     }
                 }
-                Key::Char(keys::BACKSPACE) | Key::Special(EscapeSeq::Delete) => {}
-                c if c == Key::Char('h').control() => {}
-                Key::Char(keys::ENTER) => {}
+                Key::Char(keys::BACKSPACE) => {
+                    self.backspace_char();
+                }
+                Key::Special(EscapeSeq::Delete) => {
+                    self.move_cursor(Key::Special(EscapeSeq::RightArrow));
+                    self.convert_cx_to_rx(); // move cursor only does cx, we need rx also
+                    self.backspace_char();
+                }
+                c if c == Key::Char('h').control() => {
+                    self.backspace_char();
+                }
+                Key::Char(keys::ENTER) => {
+                    self.insert_newline();
+                }
                 Key::Char(c) => {
                     self.insert_char(c);
                 }
@@ -367,14 +380,60 @@ impl Editor {
     }
 
     fn insert_char(&mut self, c: char) {
-        if (self.cy as usize) > self.lines.len() {
-            self.render.push(String::new());
-            self.lines.push(String::new()); //add new line to render and lines buffers 
+        if (self.cy as usize) >= self.lines.len() {
+            self.insert_row();
         }
         self.render[self.cy as usize].insert(self.rx as usize, c); // TODO: handle insert tabs
         self.lines[self.cy as usize].insert(self.cx as usize, c);
 
+        self.cx += 1;
+
         self.dirty = true;
+    }
+    fn insert_row(&mut self) {
+        self.render.insert(self.cy as usize, String::new());
+        self.lines.insert(self.cy as usize, String::new());
+
+        self.dirty = true;
+    }
+    fn insert_newline(&mut self) {
+        if self.cx == 0 {
+            self.insert_row();
+        } else {
+            //enter was pressed in the middle of the line
+            let second_half = self.lines[self.cy as usize].split_off(self.cx as usize);
+            self.lines.insert(self.cy as usize + 1, second_half);
+
+            let second_half = self.render[self.cy as usize].split_off(self.cx as usize);
+            self.render.insert(self.cy as usize + 1, second_half);
+        }
+
+        self.cy += 1;
+        self.cx = 0;
+    }
+    fn backspace_char(&mut self) {
+        if (self.cy as usize) < self.lines.len() && !(self.cx == 0 && self.cy == 0) {
+            // not on extra line at bottom and not on upper right corner
+
+            if self.cx > 0 {
+                //not at first char
+                self.render[self.cy as usize].remove(self.rx as usize - 1); // TODO: handle backspace tabs
+                self.lines[self.cy as usize].remove(self.cx as usize - 1);
+
+                self.cx -= 1;
+            } else {
+                let line = self.render.remove(self.cy as usize);
+                self.render[self.cy as usize - 1].push_str(&line);
+
+                let line = self.lines.remove(self.cy as usize);
+                self.cx = self.lines[self.cy as usize - 1].len() as u32;
+                self.lines[self.cy as usize - 1].push_str(&line);
+
+                self.cy -= 1;
+            }
+
+            self.dirty = true;
+        }
     }
 
     fn clear_screen(&self) {
