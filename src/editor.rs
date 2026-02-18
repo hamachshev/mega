@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
     path::{Path, PathBuf},
-    str::FromStr,
     time::{Duration, Instant},
 };
 
@@ -50,7 +49,7 @@ impl Editor {
     }
 
     pub fn start(&mut self) {
-        self.set_status_message("HELP: Ctrl-S to save | Ctrl-Q to quit");
+        self.set_status_message("HELP: Ctrl-S to save | Ctrl-Q to quit | Ctrl-F to search");
         self.refresh_screen();
         self.process_keypress();
     }
@@ -99,6 +98,9 @@ impl Editor {
                     break;
                 }
                 c if c == Key::Char('l').control() => {}
+                c if c == Key::Char('f').control() => {
+                    self.find();
+                }
                 c if c == Key::Char('s').control() => match self.save() {
                     Ok(len) => {
                         if len > 0 {
@@ -465,6 +467,23 @@ impl Editor {
             }
         }
     }
+    fn convert_rx_to_cx(&mut self) {
+        let mut cur_rx = 0;
+        if (self.cy as usize) < self.render.len() {
+            let curr_row = &self.lines[self.cy as usize];
+            for (cx, c) in curr_row.chars().enumerate() {
+                if cur_rx == self.rx {
+                    self.cx = cx as u32;
+                    break;
+                }
+                cur_rx += 1;
+                if c == '\t' {
+                    let spaces_needed = (MEGA_TAB_STOP - (cx % MEGA_TAB_STOP)) as u32;
+                    self.rx += spaces_needed - 1; //already counted one for '\t'
+                }
+            }
+        }
+    }
     fn save(&mut self) -> io::Result<usize> {
         if self.filename.is_none() {
             let mut answer = String::new();
@@ -510,6 +529,7 @@ impl Editor {
                     }
                     Key::Char(c) => {
                         if c == keys::ENTER && answer.len() > 0 {
+                            self.set_status_message("");
                             return Some(answer);
                         }
                         if !c.is_control() {
@@ -526,7 +546,22 @@ impl Editor {
         }
         None
     }
-    fn find(&mut self) {}
+    fn find(&mut self) {
+        match self.prompt("Search: (ESC to cancel)", &mut String::new()) {
+            Some(answer) => {
+                for (iy, line) in self.render.iter().enumerate() {
+                    if let Some(ix) = line.find(answer.as_str()) {
+                        self.cy = iy as u32;
+                        self.rx = ix as u32;
+                        self.convert_rx_to_cx();
+                        self.row_offset = self.render.len(); //huh?
+                        break;
+                    }
+                }
+            }
+            None => {}
+        }
+    }
     fn set_status_message(&mut self, msg: &str) {
         self.status_msg.clear();
         self.status_msg = msg.to_string();
