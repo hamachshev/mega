@@ -12,10 +12,10 @@ pub fn make_raw() -> io::Result<()> {
     let mut termios = Termios::from_fd(stdin().as_raw_fd())?;
     let _ = ORIG_TERMIOS.set(termios.clone());
 
+    cfmakeraw(&mut termios);
+
     termios.c_cc[VTIME] = 1;
     termios.c_cc[VMIN] = 0;
-
-    cfmakeraw(&mut termios);
 
     tcsetattr(stdin().as_raw_fd(), TCSAFLUSH, &mut termios)?;
     Ok(())

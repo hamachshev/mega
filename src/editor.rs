@@ -1,11 +1,10 @@
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Read, Write, stdin, stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    str::FromStr,
     time::{Duration, Instant},
 };
-
-use rustix::io::write;
 
 use crate::{command, editor, keys, terminal};
 
@@ -102,7 +101,11 @@ impl Editor {
                 c if c == Key::Char('l').control() => {}
                 c if c == Key::Char('s').control() => match self.save() {
                     Ok(len) => {
-                        self.set_status_message(&format!("{} bytes written to disk", len));
+                        if len > 0 {
+                            self.set_status_message(&format!("{} bytes written to disk", len));
+                        } else {
+                            self.set_status_message("Save aborted");
+                        }
                     }
                     Err(error) => {
                         self.set_status_message(&format!("Can't save! IO error: {}", error));
@@ -164,7 +167,9 @@ impl Editor {
     }
     fn read_key(&self) -> Option<editor::Key> {
         let mut buf = [0u8; 1];
-        stdin().read(&mut buf).ok()?;
+
+        while stdin().read(&mut buf).ok()? == 0 {} //spin if just times out
+
         if buf[0] == b'\x1b' {
             let mut escape_code = [0u8; 3];
             stdin().read(&mut escape_code).ok()?;
@@ -198,6 +203,7 @@ impl Editor {
                 },
                 _ => {}
             }
+            return Some(Key::Special(EscapeSeq::Escape));
         }
         return Some(Key::Char(buf[0] as char));
     }
@@ -258,7 +264,7 @@ impl Editor {
                 None => format!("[Non-Unicode file name] {} - {} lines", modified, self.rows),
             },
             None => {
-                format!("No Name] - {} lines", self.rows)
+                format!("[No Name] - {} lines", self.rows)
             }
         };
         let len = status.len().min(self.cols as usize);
@@ -460,15 +466,59 @@ impl Editor {
         }
     }
     fn save(&mut self) -> io::Result<usize> {
-        if let Some(filename) = &self.filename {
-            let mut file = File::create(filename)?;
-            let buf = self.lines.join("\n");
-            file.write_all(buf.as_bytes())?;
-            self.dirty = false;
-            return Ok(buf.as_bytes().len());
+        if self.filename.is_none() {
+            self.prompt("Enter a filename (ESC to cancel):");
+            //if cancelled...
+            if self.filename.is_none() {
+                return Ok(0); // no error, no bytes written
+            }
         }
+        // at this point will have filename
+        let filename = self.filename.as_ref().unwrap();
+        let mut file = File::create(filename)?;
+        let buf = self.lines.join("\n");
+        file.write_all(buf.as_bytes())?;
         self.dirty = false;
-        Ok(0)
+        return Ok(buf.as_bytes().len());
+    }
+    fn prompt(&mut self, prompt: &str) {
+        let mut path = String::new();
+        loop {
+            self.set_status_message(&format!("{} {}", prompt, &path));
+            self.refresh_screen();
+
+            if let Some(key) = self.read_key() {
+                match key {
+                    Key::Char(keys::BACKSPACE) => {
+                        let _ = path.pop();
+                    }
+                    Key::Char(c) => {
+                        if c == keys::ENTER && path.len() > 0 {
+                            let path = PathBuf::from(&path);
+                            if Path::exists(&path) {
+                                self.set_status_message(
+                            "WARNING!!! Filename exists and will be overwritten. Press ! to OVERWRITE; any key to cancel",
+                        );
+                                self.refresh_screen();
+                                let Some(Key::Char('!')) = self.read_key() else {
+                                    continue;
+                                };
+                            }
+                            self.filename = Some(path);
+                            break;
+                        }
+                        if !c.is_control() {
+                            path.push(c);
+                        }
+                    }
+                    Key::Special(EscapeSeq::Escape) => {
+                        self.set_status_message("");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
     fn set_status_message(&mut self, msg: &str) {
         self.status_msg.clear();
@@ -508,4 +558,5 @@ enum EscapeSeq {
     Home,
     End,
     Delete,
+    Escape,
 }
