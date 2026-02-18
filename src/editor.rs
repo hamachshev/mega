@@ -467,11 +467,28 @@ impl Editor {
     }
     fn save(&mut self) -> io::Result<usize> {
         if self.filename.is_none() {
-            self.prompt("Enter a filename (ESC to cancel):");
-            //if cancelled...
-            if self.filename.is_none() {
-                return Ok(0); // no error, no bytes written
+            let mut answer = String::new();
+            loop {
+                match self.prompt("Enter a filename (ESC to cancel):", &mut answer) {
+                    Some(path) => {
+                        let path = PathBuf::from(&path);
+                        if Path::exists(&path) {
+                            self.set_status_message(
+                            "WARNING!!! Filename exists and will be overwritten. Press ! to OVERWRITE; any key to cancel",
+                        );
+                            self.refresh_screen();
+                            let Some(Key::Char('!')) = self.read_key() else {
+                                continue;
+                            };
+                        }
+                        break;
+                    }
+                    None => {
+                        return Ok(0); // no error, no bytes written
+                    }
+                }
             }
+            self.filename = Some(answer.into());
         }
         // at this point will have filename
         let filename = self.filename.as_ref().unwrap();
@@ -481,34 +498,22 @@ impl Editor {
         self.dirty = false;
         return Ok(buf.as_bytes().len());
     }
-    fn prompt(&mut self, prompt: &str) {
-        let mut path = String::new();
+    fn prompt<'a>(&mut self, prompt: &str, answer: &'a mut String) -> Option<&'a mut String> {
         loop {
-            self.set_status_message(&format!("{} {}", prompt, &path));
+            self.set_status_message(&format!("{} {}", prompt, &answer));
             self.refresh_screen();
 
             if let Some(key) = self.read_key() {
                 match key {
                     Key::Char(keys::BACKSPACE) => {
-                        let _ = path.pop();
+                        let _ = answer.pop();
                     }
                     Key::Char(c) => {
-                        if c == keys::ENTER && path.len() > 0 {
-                            let path = PathBuf::from(&path);
-                            if Path::exists(&path) {
-                                self.set_status_message(
-                            "WARNING!!! Filename exists and will be overwritten. Press ! to OVERWRITE; any key to cancel",
-                        );
-                                self.refresh_screen();
-                                let Some(Key::Char('!')) = self.read_key() else {
-                                    continue;
-                                };
-                            }
-                            self.filename = Some(path);
-                            break;
+                        if c == keys::ENTER && answer.len() > 0 {
+                            return Some(answer);
                         }
                         if !c.is_control() {
-                            path.push(c);
+                            answer.push(c);
                         }
                     }
                     Key::Special(EscapeSeq::Escape) => {
@@ -519,7 +524,9 @@ impl Editor {
                 }
             }
         }
+        None
     }
+    fn find(&mut self) {}
     fn set_status_message(&mut self, msg: &str) {
         self.status_msg.clear();
         self.status_msg = msg.to_string();
