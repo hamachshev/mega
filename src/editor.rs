@@ -573,14 +573,18 @@ impl Editor {
             }
         };
         let mut answer = String::new();
-        match self.prompt("Search: (ESC to cancel)", &mut answer, callback) {
+        match self.prompt(
+            "Search: (ESC to cancel, ENTER to confirm)",
+            &mut answer,
+            callback,
+        ) {
             Some(_) => {
                 //next and prev matches
                 let mut rx_match = self.rx;
                 let mut cy_match = self.cy;
 
                 self.set_status_message(&format!(
-                    "Searching for <{}> - <-  prev  next -> - ESC to cancel",
+                    "Searching for <{}> - next -> - ESC to cancel",
                     &answer
                 ));
                 self.refresh_screen();
@@ -588,15 +592,20 @@ impl Editor {
                 loop {
                     match self.read_key() {
                         Some(Key::Special(EscapeSeq::RightArrow)) => {
-                            for (iy, line) in self.render[cy_match as usize..].iter().enumerate() {
+                            for iy in cy_match as usize..self.render.len() {
+                                let line = &self.render[iy];
                                 if line.len() == 0 {
                                     continue;
                                 }
 
-                                let start = if iy != 0 { 0 } else { rx_match as usize + 1 };
+                                let start = if iy != cy_match as usize {
+                                    0
+                                } else {
+                                    rx_match as usize + 1
+                                };
 
                                 if let Some(ix) = line[start..].find(answer.as_str()) {
-                                    self.cy = cy_match + (iy as u32);
+                                    self.cy = iy as u32;
                                     self.rx = start as u32 + (ix as u32);
                                     self.convert_rx_to_cx();
                                     rx_match = self.rx;
@@ -608,27 +617,33 @@ impl Editor {
                                         &answer
                                     ));
                                     break;
+                                } else {
+                                    //no more matches to the right -- this is actually buggy
+                                    //because we only know there are no more after already pressed
+                                    //the right arrow to find out, but whatever
+                                    self.set_status_message(&format!(
+                                        "Searching for <{}> - <- prev - ESC to cancel",
+                                        &answer
+                                    ));
                                 }
                             }
                         }
                         Some(Key::Special(EscapeSeq::LeftArrow)) => {
-                            for (iy, line) in self.render[..cy_match as usize + 1]
-                                .iter()
-                                .rev()
-                                .enumerate()
-                            {
+                            for iy in (0..=cy_match as usize).rev() {
+                                let line = &self.render[iy];
+
                                 if line.len() == 0 {
                                     continue;
                                 }
 
-                                let end = if iy != 0 {
+                                let end = if iy != cy_match as usize {
                                     line.len()
                                 } else {
                                     rx_match as usize + 1
                                 };
 
                                 if let Some(ix) = line[..end].rfind(answer.as_str()) {
-                                    self.cy = cy_match - (iy as u32);
+                                    self.cy = iy as u32;
                                     self.rx = ix as u32;
                                     self.convert_rx_to_cx();
 
@@ -641,6 +656,14 @@ impl Editor {
                                         &answer
                                     ));
                                     break;
+                                } else {
+                                    //no more matches to the left -- this is actually buggy
+                                    //because we only know there are no more after already pressed
+                                    //the right arrow to find out, but whatever
+                                    self.set_status_message(&format!(
+                                        "Searching for <{}> - next -> - ESC to cancel",
+                                        &answer
+                                    ));
                                 }
                             }
                         }
