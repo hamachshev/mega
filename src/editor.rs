@@ -488,7 +488,7 @@ impl Editor {
         if self.filename.is_none() {
             let mut answer = String::new();
             loop {
-                match self.prompt("Enter a filename (ESC to cancel):", &mut answer) {
+                match self.prompt("Enter a filename (ESC to cancel):", &mut answer, |_, _| {}) {
                     Some(path) => {
                         let path = PathBuf::from(&path);
                         if Path::exists(&path) {
@@ -517,7 +517,12 @@ impl Editor {
         self.dirty = false;
         return Ok(buf.as_bytes().len());
     }
-    fn prompt<'a>(&mut self, prompt: &str, answer: &'a mut String) -> Option<&'a mut String> {
+    fn prompt<'a>(
+        &mut self,
+        prompt: &str,
+        answer: &'a mut String,
+        mut callback: impl FnMut(&mut Self, &String),
+    ) -> Option<&'a mut String> {
         loop {
             self.set_status_message(&format!("{} {}", prompt, &answer));
             self.refresh_screen();
@@ -526,6 +531,8 @@ impl Editor {
                 match key {
                     Key::Char(keys::BACKSPACE) => {
                         let _ = answer.pop();
+
+                        callback(self, answer);
                     }
                     Key::Char(c) => {
                         if c == keys::ENTER && answer.len() > 0 {
@@ -534,6 +541,8 @@ impl Editor {
                         }
                         if !c.is_control() {
                             answer.push(c);
+
+                            callback(self, answer);
                         }
                     }
                     Key::Special(EscapeSeq::Escape) => {
@@ -547,20 +556,113 @@ impl Editor {
         None
     }
     fn find(&mut self) {
-        match self.prompt("Search: (ESC to cancel)", &mut String::new()) {
-            Some(answer) => {
-                for (iy, line) in self.render.iter().enumerate() {
-                    if let Some(ix) = line.find(answer.as_str()) {
-                        self.cy = iy as u32;
-                        self.rx = ix as u32;
-                        self.convert_rx_to_cx();
-                        self.row_offset = self.render.len(); //huh?
-                        break;
+        let cx_save = self.cx;
+        let cy_save = self.cy;
+        let row_offset_save = self.row_offset;
+        let col_offset_save = self.col_offset;
+
+        let callback = |editor: &mut Self, answer: &String| {
+            for (iy, line) in editor.render.iter().enumerate() {
+                if let Some(ix) = line.find(answer.as_str()) {
+                    editor.cy = iy as u32;
+                    editor.rx = ix as u32;
+                    editor.convert_rx_to_cx();
+                    editor.row_offset = editor.render.len(); //huh?
+                    break;
+                }
+            }
+        };
+        let mut answer = String::new();
+        match self.prompt("Search: (ESC to cancel)", &mut answer, callback) {
+            Some(_) => {
+                //next and prev matches
+                let mut rx_match = self.rx;
+                let mut cy_match = self.cy;
+
+                self.set_status_message(&format!(
+                    "Searching for <{}> - <-  prev  next -> - ESC to cancel",
+                    &answer
+                ));
+                self.refresh_screen();
+
+                loop {
+                    match self.read_key() {
+                        Some(Key::Special(EscapeSeq::RightArrow)) => {
+                            for (iy, line) in self.render[cy_match as usize..].iter().enumerate() {
+                                if line.len() == 0 {
+                                    continue;
+                                }
+
+                                let start = if iy != 0 { 0 } else { rx_match as usize + 1 };
+
+                                if let Some(ix) = line[start..].find(answer.as_str()) {
+                                    self.cy = cy_match + (iy as u32);
+                                    self.rx = start as u32 + (ix as u32);
+                                    self.convert_rx_to_cx();
+                                    rx_match = self.rx;
+                                    cy_match = self.cy;
+                                    self.row_offset = self.render.len();
+
+                                    self.set_status_message(&format!(
+                                        "Searching for <{}> - <-  prev  next -> - ESC to cancel",
+                                        &answer
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                        Some(Key::Special(EscapeSeq::LeftArrow)) => {
+                            for (iy, line) in self.render[..cy_match as usize + 1]
+                                .iter()
+                                .rev()
+                                .enumerate()
+                            {
+                                if line.len() == 0 {
+                                    continue;
+                                }
+
+                                let end = if iy != 0 {
+                                    line.len()
+                                } else {
+                                    rx_match as usize + 1
+                                };
+
+                                if let Some(ix) = line[..end].rfind(answer.as_str()) {
+                                    self.cy = cy_match - (iy as u32);
+                                    self.rx = ix as u32;
+                                    self.convert_rx_to_cx();
+
+                                    rx_match = self.rx;
+                                    cy_match = self.cy;
+
+                                    self.row_offset = self.render.len();
+                                    self.set_status_message(&format!(
+                                        "Searching for <{}> - <-  prev  next -> - ESC to cancel",
+                                        &answer
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                        Some(Key::Special(EscapeSeq::Escape)) => {
+                            self.set_status_message("");
+                            break;
+                        }
+
+                        Some(_) => {}
+                        None => {}
                     }
+                    self.refresh_screen();
                 }
             }
             None => {}
         }
+
+        //esc pressed, so put cursor back
+        self.cx = cx_save;
+        self.cy = cy_save;
+        self.row_offset = row_offset_save;
+        self.col_offset = col_offset_save;
     }
     fn set_status_message(&mut self, msg: &str) {
         self.status_msg.clear();
